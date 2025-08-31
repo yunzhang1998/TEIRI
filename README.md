@@ -22,6 +22,8 @@ TSS signal:
     the counts of unique mapping reads (CAGE and/or RAMPAGE) supporting the tss in tsv format (at least 5 fields: chrom, chromStart, chromEnd, strand, and score) 
 TE reference bed: 
     TE annotation in BED format (at least 6 fields: chrom, chromStart, chromEnd, ID, name, and strand).
+eRNA reference bed: 
+    eRNA annotation in BED format (at least 6 fields: chrom, chromStart, chromEnd, ID, name, and strand).
 Reference GTF: 
     reference GTF file for gene annotations.
 ```
