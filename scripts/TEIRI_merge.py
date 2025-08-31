@@ -7,18 +7,19 @@ import string
 import time
 import subprocess
 import logging
+import copy
+
 
 parser = argparse.ArgumentParser(description='TEIRI_merge')
 parser.add_argument('-i', '--gtf_list', help="A text file with a list of GTF files (required)")
 parser.add_argument('-r', '--reference_gtf', help="Reference genome annotation in GTF format (required)")
 parser.add_argument('-l', '--corrected_bed12', help="The flair-corrected bed12 file")
 parser.add_argument('--corrected_tss', help="A tsv file with the corrected TE-derived TSSs (TEIRI_correct.py generated)")
-parser.add_argument('--corrected_tss_single', help="A tsv file with the corrected TE-derived TSSs for the single-exon transcript (TEIRI_correct.py generated)")
+parser.add_argument('--corrected_tss_single', help="A tsv file with the corrected TE-derived TSSs for the single-exon transcript (TEIRI_correct.py generated). We recommend excluding single-exon transcripts.")
 parser.add_argument('--TGS_weight', default=1000, type=float, help='The weight of TGS reads supporting the transcript (default: 1000)')
 parser.add_argument( '--illumina_threshold', default=0.05, type=float, help='The min NGS ratio supporting the transcript (default: 0.05)')
 parser.add_argument( '--nanopore_threshold', default=2, type=float, help='The min TGS reads supporting the transcript (default: 2)')
-parser.add_argument( '--ref_transcript_length', default=2725, type=float, help='The average length of reference transcripts (default: 2725)')
-parser.add_argument('--max_transcripts', default=10, type=int, help='The max counts of transcripts for a TE-initiated RNA (default: 10)')
+parser.add_argument('--max_transcripts', default=20, type=int, help='The max counts of transcripts for a TE-initiated RNA (default: 20)')
 parser.add_argument('--trunctated_exclude', default=True, help='Truncated transcripts were excluded, as they may represent fragments of the full-length transcript (default: True)')
 parser.add_argument('--min_transcript_length', default=200, type=float, help='The min transcript length (default: 200)')
 parser.add_argument('-p', '--prefix', default='TEIRI', help="Prefix for output file (default: TEIRI)")
@@ -183,7 +184,7 @@ def transcript_correct(transcript,reference_gtf,te_tss,ss1,ss2):
                     corrected_transcript[transcriptID] = new_exons
     return corrected_transcript
 
-def transcript_merge(corrected_transcript,TGS_weight,ref_transcript_length,illumina_threshold,nanopore_threshold,trunctated_exclude,max_transcripts,min_transcript_length):
+def transcript_merge(corrected_transcript,TGS_weight,illumina_threshold,nanopore_threshold,trunctated_exclude,max_transcripts,min_transcript_length):
     mergeded_transcript = {}
     for gtf in corrected_transcript:
         for transcriptID in list(corrected_transcript[gtf].keys()):
@@ -216,9 +217,12 @@ def transcript_merge(corrected_transcript,TGS_weight,ref_transcript_length,illum
                     if (id[1]=="-") and (int(exons[-1]) > mergeded_transcript[chr][tss_][ss_all][3]):
                         mergeded_transcript[chr][tss_][ss_all][3] = int(exons[-1])
 
-
+    
+    
     for chr in mergeded_transcript:
         for tss_ in list(mergeded_transcript[chr].keys()):
+            to_del=set()
+            valid_candidates = {}
             for ss_all in list(mergeded_transcript[chr][tss_].keys()):
                 exons = [mergeded_transcript[chr][tss_][ss_all][2]] + ss_all.split("\t") + [mergeded_transcript[chr][tss_][ss_all][3]]
                 
@@ -226,25 +230,43 @@ def transcript_merge(corrected_transcript,TGS_weight,ref_transcript_length,illum
                 nanopore_reads = mergeded_transcript[chr][tss_][ss_all][1]
                 illumina_score = len(list(set(mergeded_transcript[chr][tss_][ss_all][0]))) 
                 if args.corrected_bed12:
-                    nanopore_score = nanopore_reads*TGS_weight*transcript_length/ref_transcript_length
+                    nanopore_score = nanopore_reads*TGS_weight
                     weight_score = illumina_score + nanopore_score
                 else:
                     weight_score = illumina_score
+                mergeded_transcript[chr][tss_][ss_all][0]=float(weight_score)
+                
+                
+                if transcript_length > min_transcript_length :
+                    valid_candidates[ss_all] = (weight_score, transcript_length)
+                
                 if illumina_score < illumina_threshold and nanopore_reads < nanopore_threshold :
-                    del mergeded_transcript[chr][tss_][ss_all]
+                    to_del.add(ss_all)
                 elif transcript_length < min_transcript_length :
+                    to_del.add(ss_all)
+            
+            original_mergeded_transcript = copy.deepcopy(mergeded_transcript[chr][tss_])
+            for ss_all in to_del:
                     del mergeded_transcript[chr][tss_][ss_all]
-                else:
-                    mergeded_transcript[chr][tss_][ss_all][0]=float(weight_score)
-
+                    
+            if not mergeded_transcript[chr][tss_]:
+                if valid_candidates:
+                    best_ss_all = max(valid_candidates.items(), key=lambda x: x[1][0])[0]
+                    mergeded_transcript[chr][tss_][best_ss_all] = original_mergeded_transcript[best_ss_all]
+                
     if trunctated_exclude:
         for chr in mergeded_transcript:
             for tss_ in list(mergeded_transcript[chr].keys()):
+                to_delete = set()
                 for ss_all in list(mergeded_transcript[chr][tss_].keys()):
                     for ss_all_ in list(mergeded_transcript[chr][tss_].keys()):
+                        if ss_all == ss_all_:
+                            continue
                         if (ss_all in ss_all_) and ss_all.split("\t")[0]==ss_all_.split("\t")[0]  and mergeded_transcript[chr][tss_][ss_all][0] < mergeded_transcript[chr][tss_][ss_all_][0]:
-                            del mergeded_transcript[chr][tss_][ss_all]
-                            break
+                            to_delete.add(ss_all)
+                for key in to_delete:
+                    del mergeded_transcript[chr][tss_][key]
+                            
 
     final_transcript = {}
     for chr in mergeded_transcript:
@@ -364,11 +386,16 @@ for gtf in transcripts:
 
 min_samples = len(gtf_list) * args.illumina_threshold
 
-mergeded_transcripts=transcript_merge(corrected_transcripts,args.TGS_weight,args.ref_transcript_length,min_samples,args.nanopore_threshold,args.trunctated_exclude,args.max_transcripts,args.min_transcript_length)
-
-single_te_tss = process_bed(args.corrected_tss_single)
-
-SE_transcripts = SE_merge(single_te_tss)
+mergeded_transcripts=transcript_merge(corrected_transcripts,args.TGS_weight,min_samples,args.nanopore_threshold,args.trunctated_exclude,args.max_transcripts,args.min_transcript_length)
 
 output_file = args.prefix + "_TE.gtf"
+
+if args.corrected_tss_single:
+    single_te_tss = process_bed(args.corrected_tss_single)
+    SE_transcripts = SE_merge(single_te_tss)
+
+else:
+    SE_transcripts={}
+
 write_gtf(mergeded_transcripts,SE_transcripts,output_file)
+    

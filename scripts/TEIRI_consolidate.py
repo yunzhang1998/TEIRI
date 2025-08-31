@@ -23,6 +23,7 @@ args = parser.parse_args()
 
 def process_gtf(gtf_path):
     transcript = {}
+    t2g = {}
     print((gtf_path+"_load"))
     with open(gtf_path) as file:
         for eachline in file:
@@ -35,12 +36,20 @@ def process_gtf(gtf_path):
                         if "transcript_id" in transcriptinfo:
                             transcriptid = transcriptinfo.split("\"")[1]
                             break
+                    for transcriptinfo in anno:
+                        if "gene_id" in transcriptinfo:
+                            t2g[transcriptid] = [transcriptinfo.split("\"")[1]]
+                            break
+                    for transcriptinfo in anno:
+                        if "gene_name" in transcriptinfo:
+                            t2g[transcriptid] .append(transcriptinfo.split("\"")[1])
+                            break
                     id = "\t".join([temp[0], str(temp[6]), transcriptid])
                     if id not in transcript:
                         transcript[id] = []
                     transcript[id].append(int(temp[3]))
                     transcript[id].append(int(temp[4]))
-    return transcript
+    return transcript,t2g
 
 def tss_merge(transcript,tss_merge_distance,min_exon_length):
     merged_transcript = {}
@@ -228,25 +237,114 @@ def generate_random_string(length=8):
     return random_string
 
 
+
+
 def ref_merge(temp_file,TE_anno,reference_gtf,prefix):
     cmd = "bedtools intersect -wo -a "+ temp_file + "_ref_tss.bed -b "+ TE_anno + "  > " + temp_file +  "_TE_anno.bed "
-    subprocess.check_call(cmd, shell=True, executable='/bin/bash')
+    subprocess.check_call(cmd, shell=True)
 
     cmd = "cut -f 4   " + temp_file +  "_TE_anno.bed |sort|uniq > " + temp_file +  "_transcript.txt"
-    subprocess.check_call(cmd, shell=True, executable='/bin/bash')
+    subprocess.check_call(cmd, shell=True)
 
     cmd = "awk -F \"\\\"\" 'BEGIN{while(getline<\"" + temp_file +  "_transcript.txt\") a[$1]=1;} {if(a[$4]!=1) print $0}' "+ reference_gtf + " > " + temp_file +  "_reference_filtered.gtf "
-    subprocess.check_call(cmd, shell=True, executable='/bin/bash')
+    subprocess.check_call(cmd, shell=True)
 
     cmd = "cat " + prefix + ".gtf " + temp_file +  "_reference_filtered.gtf  > " + temp_file +  "_TE_merge.gtf"
-    subprocess.check_call(cmd, shell=True, executable='/bin/bash')
+    subprocess.check_call(cmd, shell=True)
 
     cmd = "gffread -T --sort-alpha -o " + args.prefix + "_sorted.gtf " + temp_file +  "_TE_merge.gtf"
-    subprocess.check_call(cmd, shell=True, executable='/bin/bash')
+    subprocess.check_call(cmd, shell=True)
+
+def splicing_sites_extract(reference_gtf):
+    ss1 = {}
+    ss2 = {}
+    
+    for transcriptID in reference_gtf:
+        id = transcriptID.split("\t")
+        exons=reference_gtf[transcriptID]
+        exons.sort() 
+        num_exons=int(len(exons)/2)
+        chr = "\t".join([id[0],id[1]])
+        if  num_exons>=2 :
+            if chr not in ss1:
+                ss1[chr]={}
+                ss2[chr]={}
+            for i in range(0,num_exons-1):
+                ss1_temp = str(exons[2*i+2])
+                ss2_temp = str(exons[2*i+1])
+                if ss1_temp not in ss1[chr]:
+                    ss1[chr][ss1_temp]=[transcriptID]
+                else:
+                    ss1[chr][ss1_temp].append(transcriptID)
+                if ss2_temp not in ss2[chr]:
+                    ss2[chr][ss2_temp]=[transcriptID]
+                else:
+                    ss2[chr][ss2_temp].append(transcriptID)
+    return ss1,ss2
+
+def ref_ID_generate(reference_gtf,ss,i,chr,strand,ss1,ss2,ref_t2g):
+    reference_transcripts=[]
+    if strand == "+":
+        if ss in ss2[chr] and i % 2==1:
+            reference_transcripts = ss2[chr][ss]
+        elif ss in ss1[chr] and i % 2==0:
+            reference_transcripts = ss1[chr][ss]
+    elif strand == "-":
+        if ss in ss1[chr] and i % 2==1:
+            reference_transcripts = ss1[chr][ss]
+        elif ss in ss2[chr] and i % 2==0:
+            reference_transcripts = ss2[chr][ss]
+
+    if len(reference_transcripts)>=1:
+        for ID in reference_transcripts:
+            ref_ID = ID.split("\t")[2]
+            yield ref_ID, ref_t2g[ref_ID]
+    else:
+        yield "None","None"
+
+def transcript_anno(transcript,reference_gtf,ss1,ss2,ref_t2g):
+    corrected_transcript={}
+    for transcriptID in list(transcript.keys()):
+        id = transcriptID.split("\t")
+        corrected_transcript[id[2]] = {}
+        exons=transcript[transcriptID]
+        num_exons=int(len(exons)/2)
+        chr = "\t".join([id[0],id[1]])
+        if id[1]=="+":
+            exons.sort() 
+        elif id[1]=="-":
+            exons.sort(reverse=True)
+        correct = 0
 
 
+        for i in range(1,2*num_exons-1):
+            for refID, ref_gene in ref_ID_generate(reference_gtf,str(exons[i]),i,chr,id[1],ss1,ss2,ref_t2g):
+                if refID !="None":
+                    if i ==1:
+                        corrected_transcript[id[2]][refID] = [ref_gene[0],ref_gene[1],"Annoated"]
+                    else:
+                        corrected_transcript[id[2]][refID] = [ref_gene[0],ref_gene[1],"Chimeric"]
+                    correct = 1
+            if correct == 1:
+                break
+
+        if correct != 1:
+            corrected_transcript[id[2]]["-"] = ["-","-","Intergenic"]
+
+    return corrected_transcript
+
+def write_anno(corrected_transcript,ts_t2g,output_file):
+    gene_id=0
+
+    with open(output_file, "w") as f_out:
+        for transcriptID in corrected_transcript:
+            for refID in corrected_transcript[transcriptID]:
+                stringreturn=[transcriptID, ts_t2g[transcriptID][0], refID  ] + corrected_transcript[transcriptID][refID]
+                stringreturn = "\t".join([str(x) for x in stringreturn])
+                f_out.write(stringreturn + "\n")
 
 transcripts = {}
+T2G = {}
 
 gtf_list = []
 with open(args.gtf_list) as files:
@@ -255,10 +353,10 @@ with open(args.gtf_list) as files:
 files.close()  
 
 for gtf in gtf_list:
-    transcripts[gtf] = process_gtf(gtf)
+    transcripts[gtf],T2G[gtf] = process_gtf(gtf)
 
 if args.reference_gtf:
-    ref_transcript = process_gtf(args.reference_gtf)
+    ref_transcript,T2G["ref"] = process_gtf(args.reference_gtf)
 
 merged_transcripts,merged_tss  = tss_merge(transcripts,args.tss_merge_distance,args.min_exon_length)
 
@@ -274,4 +372,12 @@ output_file = args.prefix + "_tss.bed"
 write_bed(merged_transcripts,merged_tss,output_file)
 
 cmd = "rm " + temp_file +  "*"
-subprocess.check_call(cmd, shell=True, executable='/bin/bash')
+subprocess.check_call(cmd, shell=True)
+
+ss1,ss2 = splicing_sites_extract(ref_transcript)
+
+TE_gtf,T2G["TE"] = process_gtf(args.prefix + ".gtf")
+
+corrected_transcript = transcript_anno(TE_gtf,ref_transcript,ss1,ss2,T2G["ref"])
+output_file = args.prefix + "_gene_anno.bed"
+write_anno(corrected_transcript,T2G["TE"],output_file)
