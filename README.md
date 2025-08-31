@@ -124,6 +124,9 @@ options:
 
 ### TEIRI_consolidate.py
 
+TEIRI_consolidate.py is designed for the consolidation of TE-initiated RNAs in multiple conditions, such as different tissues.
+
+```
 usage: TEIRI_consolidate.py [-h] [-i GTF_LIST] [-r REFERENCE_GTF] [--TE_anno TE_ANNO] [--tss_merge_distance TSS_MERGE_DISTANCE]
                             [--min_exon_length MIN_EXON_LENGTH] [-p PREFIX]
 
