@@ -31,9 +31,11 @@ Reference GTF:
 TEIRI_correct.py extracts and filters the first exon of transcript. TSSs of the first exons are then corrected based on the counts of reads supporting the TSS (including long-read RNA-seq, CAGE, and RAMPAGE).
 
 ```
-usage: TEIRI_correct.py [-h] [-i GTF_LIST] [-r REFERENCE_GTF] [-l CORRECTED_BED12] [-c TSS_SCORE] [--TE_anno TE_ANNO] [--max_exon1_length MAX_EXON1_LENGTH] [--min_exon1_length MIN_EXON1_LENGTH]
-                        [--tss_window TSS_WINDOW] [--max_tss MAX_TSS] [--TGS_weight TGS_WEIGHT] [--min_NGS_ratio MIN_NGS_RATIO] [--min_TGS_reads MIN_TGS_READS] [--threshold THRESHOLD]
-                        [--min_NGS_ratio_SE MIN_NGS_RATIO_SE] [--min_TGS_reads_SE MIN_TGS_READS_SE] [--SE_threshold SE_THRESHOLD] [-p PREFIX]
+usage: TEIRI_correct.py [-h] [-i GTF_LIST] [-r REFERENCE_GTF] [-l CORRECTED_BED12] [-c TSS_SCORE] [--TE_anno TE_ANNO] [--eRNA_anno ERNA_ANNO]
+                        [--max_exon1_length MAX_EXON1_LENGTH] [--min_exon1_length MIN_EXON1_LENGTH] [--tss_window TSS_WINDOW] [--max_tss MAX_TSS]
+                        [--min_NGS_ratio MIN_NGS_RATIO] [--min_TGS_reads MIN_TGS_READS] [--threshold THRESHOLD] [--TGS_threshold TGS_THRESHOLD]
+                        [--SE_exclude SE_EXCLUDE] [--min_NGS_ratio_SE MIN_NGS_RATIO_SE] [--min_TGS_reads_SE MIN_TGS_READS_SE] [--SE_threshold SE_THRESHOLD]
+                        [-p PREFIX]
 
 TEIRI_correct
 
@@ -48,21 +50,25 @@ options:
   -c TSS_SCORE, --tss_score TSS_SCORE
                         A tsv file with the counts of unique mapping reads supporting the tss (CAGE and/or RAMPAGE)
   --TE_anno TE_ANNO     TE annotation in BED format (required)
+  --eRNA_anno ERNA_ANNO
+                        eRNA annotation in BED format (required)
   --max_exon1_length MAX_EXON1_LENGTH
                         The max length of first exon (default: 2588)
   --min_exon1_length MIN_EXON1_LENGTH
                         The min length of first exon (default: 20)
   --tss_window TSS_WINDOW
                         The window size used to calculate the weight score (default: 50)
-  --max_tss MAX_TSS     Maximum number of TSS picked per first exon (default: 2)
-  --TGS_weight TGS_WEIGHT
-                        The weight of TGS reads supporting the TSS (default: 1)
+  --max_tss MAX_TSS     Maximum number of TSS picked per first exon (default: 1)
   --min_NGS_ratio MIN_NGS_RATIO
                         The min NGS ratio supporting the first exon (default: 0.05)
   --min_TGS_reads MIN_TGS_READS
                         The min TGS reads supporting the first exon (default: 2)
   --threshold THRESHOLD
-                        The threshold of weight score for TSS (default: 10)
+                        The threshold of weight score for TSS calculated using RAMPAGE/CAGE reads (default: 10)
+  --TGS_threshold TGS_THRESHOLD
+                        The threshold of weight score for TSS calculated using TGS reads (default: 2)
+  --SE_exclude SE_EXCLUDE
+                        Single-exon transcripts were excluded due to the ambiguity in determining their strand orientation. (default: True)
   --min_NGS_ratio_SE MIN_NGS_RATIO_SE
                         The min NGS ratio supporting the single exon (default: 0.25)
   --min_TGS_reads_SE MIN_TGS_READS_SE
@@ -78,9 +84,10 @@ options:
 TEIRI_merge.py is designed for transcript merge using corrected TSSs, which is suited for multiple samples in one condition.
 
 ```
-usage: TEIRI_merge.py [-h] [-i GTF_LIST] [-r REFERENCE_GTF] [-l CORRECTED_BED12] [--corrected_tss CORRECTED_TSS] [--corrected_tss_single CORRECTED_TSS_SINGLE] [--TGS_weight TGS_WEIGHT]
-                      [--illumina_threshold ILLUMINA_THRESHOLD] [--nanopore_threshold NANOPORE_THRESHOLD] [--ref_transcript_length REF_TRANSCRIPT_LENGTH] [--max_transcripts MAX_TRANSCRIPTS]
-                      [--trunctated_exclude TRUNCTATED_EXCLUDE] [--min_transcript_length MIN_TRANSCRIPT_LENGTH] [-p PREFIX]
+usage: TEIRI_merge.py [-h] [-i GTF_LIST] [-r REFERENCE_GTF] [-l CORRECTED_BED12] [--corrected_tss CORRECTED_TSS]
+                      [--corrected_tss_single CORRECTED_TSS_SINGLE] [--TGS_weight TGS_WEIGHT] [--illumina_threshold ILLUMINA_THRESHOLD]
+                      [--nanopore_threshold NANOPORE_THRESHOLD] [--max_transcripts MAX_TRANSCRIPTS] [--trunctated_exclude TRUNCTATED_EXCLUDE]
+                      [--min_transcript_length MIN_TRANSCRIPT_LENGTH] [-p PREFIX]
 
 TEIRI_merge
 
@@ -95,17 +102,16 @@ options:
   --corrected_tss CORRECTED_TSS
                         A tsv file with the corrected TE-derived TSSs (TEIRI_correct.py generated)
   --corrected_tss_single CORRECTED_TSS_SINGLE
-                        A tsv file with the corrected TE-derived TSSs for the single-exon transcript (TEIRI_correct.py generated)
+                        A tsv file with the corrected TE-derived TSSs for the single-exon transcript (TEIRI_correct.py generated). We recommend excluding
+                        single-exon transcripts.
   --TGS_weight TGS_WEIGHT
                         The weight of TGS reads supporting the transcript (default: 1000)
   --illumina_threshold ILLUMINA_THRESHOLD
                         The min NGS ratio supporting the transcript (default: 0.05)
   --nanopore_threshold NANOPORE_THRESHOLD
                         The min TGS reads supporting the transcript (default: 2)
-  --ref_transcript_length REF_TRANSCRIPT_LENGTH
-                        The average length of reference transcripts (default: 2725)
   --max_transcripts MAX_TRANSCRIPTS
-                        The max counts of transcripts for a TE-initiated RNA (default: 10)
+                        The max counts of transcripts for a TE-initiated RNA (default: 20)
   --trunctated_exclude TRUNCTATED_EXCLUDE
                         Truncated transcripts were excluded, as they may represent fragments of the full-length transcript (default: True)
   --min_transcript_length MIN_TRANSCRIPT_LENGTH
@@ -116,10 +122,8 @@ options:
 
 ### TEIRI_consolidate.py
 
-TEIRI_consolidate.py is designed for the consolidation of TE-initiated RNAs in multiple conditions, such as different tissues.
-
-```
-usage: TEIRI_consolidate.py [-h] [-i GTF_LIST] [-r REFERENCE_GTF] [--TE_anno TE_ANNO] [--tss_merge_distance TSS_MERGE_DISTANCE] [--min_exon_length MIN_EXON_LENGTH] [-p PREFIX]
+usage: TEIRI_consolidate.py [-h] [-i GTF_LIST] [-r REFERENCE_GTF] [--TE_anno TE_ANNO] [--tss_merge_distance TSS_MERGE_DISTANCE]
+                            [--min_exon_length MIN_EXON_LENGTH] [-p PREFIX]
 
 TEIRI_consolidate
 
